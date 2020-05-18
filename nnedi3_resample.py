@@ -1,6 +1,7 @@
 import vapoursynth as vs
 import mvsfunc as mvf
 import math
+import functools
 
 
 def nnedi3_resample(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, csp=None,
@@ -8,7 +9,7 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
                     scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None,
                     int16_predictor=None, exp=None, kernel=None, invks=False, taps=None, invkstaps=3, a1=None, a2=None, chromak_up=None,
                     chromak_up_taps=None, chromak_up_a1=None, chromak_up_a2=None, chromak_down=None, chromak_down_invks=False,
-                    chromak_down_invkstaps=3, chromak_down_taps=None, chromak_down_a1=None, chromak_down_a2=None):
+                    chromak_down_invkstaps=3, chromak_down_taps=None, chromak_down_a1=None, chromak_down_a2=None, opencl=False, device=-1):
     core = vs.get_core()
     funcName = 'nnedi3_resample'
 
@@ -214,9 +215,9 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
                 V = core.std.ShufflePlanes(last, [2], vs.GRAY)
                 # Chroma up-scaling
                 U = nnedi3_resample_kernel(U, Y.width, Y.height, -sHCPlace / sHSubS, -sVCPlace / sVSubS, None, None, 1, nsize, nns, qual,
-                                           etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2)
+                                           etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, opencl, device)
                 V = nnedi3_resample_kernel(V, Y.width, Y.height, -sHCPlace / sHSubS, -sVCPlace / sVSubS, None, None, 1, nsize, nns, qual,
-                                           etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2)
+                                           etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, opencl, device)
                 # Merge planes
                 last = core.std.ShufflePlanes([Y, U, V], [0, 0, 0], last.format.color_family)
             else:
@@ -243,7 +244,8 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
         elif sigmoid:
             last = SigmoidInverse(last)
         last = nnedi3_resample_kernel(last, target_width, target_height, src_left, src_top, src_width, src_height, scale_thr, nsize, nns,
-                                      qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, invks, invkstaps)
+                                      qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, invks, invkstaps,
+                                      opencl, device)
         if gammaConv and dGammaConv:
             last = LinearToGamma(last, fulls, fulls, curved, sigmoid=sigmoid)
         elif sigmoid:
@@ -255,7 +257,7 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
         V = core.std.ShufflePlanes(last, [2], vs.GRAY)
         # Scale Y
         Y = nnedi3_resample_kernel(Y, target_width, target_height, src_left, src_top, src_width, src_height, scale_thr, nsize, nns, qual,
-                                   etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2)
+                                   etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, opencl, device)
         # Scale UV
         dCw = target_width // dHSubS
         dCh = target_height // dVSubS
@@ -264,9 +266,9 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
         dCsw = src_width / sHSubS
         dCsh = src_height / sVSubS
         U = nnedi3_resample_kernel(U, dCw, dCh, dCsx, dCsy, dCsw, dCsh, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener,
-                                   int16_predictor, exp, kernel, taps, a1, a2)
+                                   int16_predictor, exp, kernel, taps, a1, a2, opencl, device)
         V = nnedi3_resample_kernel(V, dCw, dCh, dCsx, dCsy, dCsw, dCsh, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener,
-                                   int16_predictor, exp, kernel, taps, a1, a2)
+                                   int16_predictor, exp, kernel, taps, a1, a2, opencl, device)
         # Merge planes
         last = core.std.ShufflePlanes([Y, U, V], [0, 0, 0], last.format.color_family)
 
@@ -308,7 +310,8 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
 
 def nnedi3_resample_kernel(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None,
                            scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None,
-                           int16_predictor=None, exp=None, kernel=None, taps=None, a1=None, a2=None, invks=False, invkstaps=3):
+                           int16_predictor=None, exp=None, kernel=None, taps=None, a1=None, a2=None, invks=False, invkstaps=3,
+                           opencl=False, device=-1):
     core = vs.get_core()
 
     # Parameters of scaling
@@ -365,11 +368,11 @@ def nnedi3_resample_kernel(input, target_width=None, target_height=None, src_lef
     if hResample:
         last = core.std.Transpose(last)
         last = nnedi3_resample_kernel_vertical(last, target_width, src_left, src_width, scale_thr, nsize, nns, qual, etype, pscrn, opt,
-                                               int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, invks, invkstaps)
+                                               int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, invks, invkstaps, opencl, device)
         last = core.std.Transpose(last)
     if vResample:
         last = nnedi3_resample_kernel_vertical(last, target_height, src_top, src_height, scale_thr, nsize, nns, qual, etype, pscrn, opt,
-                                               int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, invks, invkstaps)
+                                               int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, invks, invkstaps, opencl, device)
 
     # Output
     return last
@@ -377,7 +380,7 @@ def nnedi3_resample_kernel(input, target_width=None, target_height=None, src_lef
 
 def nnedi3_resample_kernel_vertical(input, target_height=None, src_top=None, src_height=None, scale_thr=None, nsize=None, nns=None,
                                     qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None,
-                                    kernel=None, taps=None, a1=None, a2=None, invks=False, invkstaps=3):
+                                    kernel=None, taps=None, a1=None, a2=None, invks=False, invkstaps=3, opencl=False, device=-1):
     core = vs.get_core()
 
     # Parameters of scaling
@@ -416,7 +419,8 @@ def nnedi3_resample_kernel_vertical(input, target_height=None, src_top=None, src
         return input
 
     # Scaling with nnedi3
-    last = nnedi3_rpow2_vertical(input, eTimes, 1, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp)
+    last = nnedi3_rpow2_vertical(input, eTimes, 1, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp,
+                                 opencl, device)
 
     # Center shift calculation
     vShift = 0.5 if eTimes >= 1 else 0
@@ -440,27 +444,44 @@ def nnedi3_resample_kernel_vertical(input, target_height=None, src_top=None, src
 
 
 def nnedi3_rpow2_vertical(input, eTimes=1, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None,
-                          int16_prescreener=None, int16_predictor=None, exp=None):
+                          int16_prescreener=None, int16_predictor=None, exp=None, opencl=False, device=-1):
     core = vs.get_core()
 
     if eTimes >= 1:
-        last = nnedi3_dh(input, field, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp)
+        last = nnedi3_dh(input, field, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, opencl, device)
         eTimes = eTimes - 1
         field = 0
     else:
         last = input
 
     if eTimes >= 1:
-        return nnedi3_rpow2_vertical(last, eTimes, field, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp)
+        return nnedi3_rpow2_vertical(last, eTimes, field, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp,
+                                     opencl, device)
     else:
         return last
 
 
 def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None,
-              int16_predictor=None, exp=None):
+              int16_predictor=None, exp=None, opencl=False, device=-1):
     core = vs.get_core()
-    return core.nnedi3.nnedi3(input, field=field, dh=True, nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn, opt=opt,
-                              int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
+
+    nnedi3 = None
+    if (opencl):
+        try:
+            nnedi3 = functools.partial(core.nnedi3cl.NNEDI3CL, device=device)
+        except AttributeError:
+            try:
+                nnedi3 = core.znedi3.nnedi3
+            except AttributeError:
+                nnedi3 = core.nnedi3.nnedi3
+    else:
+        try:
+            nnedi3 = core.znedi3.nnedi3
+        except AttributeError:
+            nnedi3 = core.nnedi3.nnedi3
+
+    return nnedi3(input, field=field, dh=True, nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn, opt=opt,
+                  int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
 
 
 ## Gamma conversion functions from HAvsFunc-r18
