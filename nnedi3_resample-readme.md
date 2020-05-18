@@ -12,7 +12,7 @@
 
 * Function: It can do scaling, color space conversion, etc.
 
-* Note: Internally always processing in 16-bit integer, and the output format can be specified by "csp" with Format id (default is the same as input).
+* Note: Internally always processing in 16-bit integer, and the output format can be specified by `csp` with Format id (default is the same as input).
 
 ### Usage
 
