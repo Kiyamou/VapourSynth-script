@@ -3,7 +3,7 @@
 ### Description
 
 * Requirements
-  * znedi3
+  * nnedi3 or znedi3 (faster)
   * nnedi3cl (if `opencl` is `True`)
   * fmtconv
   * mvsfunc
@@ -47,7 +47,7 @@ def nnedi3_resample(input,
                     chromak_down_invkstaps=3, chromak_down_taps=None,
                     chromak_down_a1=None, chromak_down_a2=None,
                     
-                    # opencl=True: nnedi3cl, opencl=False: znedi3
+                    # opencl=True: nnedi3cl, opencl=False: znedi3 or nnedi3 (if doesn't have libznedi3.dll)
                     opencl=False, device=-1):
 ```
 
